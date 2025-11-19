@@ -1302,6 +1302,15 @@ SESSION_COOKIE_TTL_DAYS = 365 * 2
 
 def _make_sid():
     return uuid.uuid4().hex
+# Global error handler so frontend always gets valid JSON, not HTML
+@app.errorhandler(500)
+def handle_500(e):
+    print("GLOBAL 500 ERROR:", e, traceback.format_exc())
+    return jsonify({
+        "reply": "Sorry — an internal server error happened on the server.",
+        "table_html": "",
+        "plot_data_uri": None
+    }), 500
 
 @app.before_request
 def ensure_sid_cookie():
