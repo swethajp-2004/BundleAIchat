@@ -1,0 +1,53 @@
+# --- Environment & Secrets ---
+.env
+.env.*
+*.key
+*.pem
+
+# --- Python caches ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+env/
+venv/
+.venv/
+ENV/
+
+# --- Data & local databases ---
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.json.backup
+
+# --- Logs & temp ---
+*.log
+*.tmp
+*.bak
+*.swp
+
+# --- OS / IDE files ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Docker-related ---
+docker-compose.override.yml
+*.pid
+*.tar
+
+# --- Frontend (if used later) ---
+node_modules/
+build/
+dist/
+*.zip
+
+# --- Misc ---
+__MACOSX/
