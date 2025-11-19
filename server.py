@@ -1,10 +1,5 @@
 # server.py -- MotherDuck / DuckDB updated
-# Changes made:
-# - Time anchoring: relative-time resolution now anchors to the dataset's MAX(date) when possible
-# - Strict month handling: if user mentions a month without a year the bot asks for the year
-# - Deterministic handlers updated to respect month+year or ask for missing year
-# - All user-visible SQL exposure removed unless DEBUG_SQL=true
-# - All internal errors return friendly rephrase messages to the user
+
 
 import os
 import re
@@ -306,6 +301,92 @@ DETECTED = {
 
 print("Auto-detected columns:", DETECTED)
 
+# ------------------------------------------------------------------
+# NEW: helper to clean extracted entity values (packages, sources, etc.)
+# ------------------------------------------------------------------
+def _clean_entity_value(value: str) -> str | None:
+    """
+    Clean up extracted entity values by:
+      - trimming whitespace and quotes
+      - removing trailing time phrases like 'for 2024', 'for last month', etc.
+      - collapsing multiple spaces
+    """
+    if not value:
+        return None
+    v = value.strip().strip('"').strip("'")
+    # Cut off common trailing phrases such as "for 2024", "in July", "for last month"...
+    v = re.split(r'\b(for|in|during|on|at|from|by)\b', v, 1)[0].strip()
+    # collapse multiple spaces
+    v = re.sub(r'\s+', ' ', v)
+    return v or None
+
+def _extract_entity_value(question: str, entity_type: str) -> str | None:
+    """
+    Try to extract the entity value (package name, marketing source, portal campaign, channel, etc.)
+    from flexible natural language like:
+      - 'show me the details about fast package'
+      - 'show me the details for the package fast'
+      - 'marketing source Google for 2024'
+      - 'main channel retail for last month'
+    entity_type: 'package', 'marketing_source', 'portal_campaign', 'channel'
+    """
+    text = question or ""
+
+    # ----- PACKAGE -----
+    if entity_type == "package":
+        # e.g. "for the package fast", "the package fast"
+        m = re.search(r'\b(?:for\s+the\s+|the\s+)?package\b\s+([A-Za-z0-9 _\-\(\)/]+)', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+        # e.g. "details about fast package"
+        m = re.search(r'\babout\s+([A-Za-z0-9 _\-\(\)/]+?)\s+\bpackage\b', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+
+    # ----- MARKETING SOURCE -----
+    elif entity_type == "marketing_source":
+        # 'marketing source <name>'
+        m = re.search(r'\bmarketing\s+source\b\s+([A-Za-z0-9 _\-\(\)/]+)', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+        # '<name> marketing source'
+        m = re.search(r'([A-Za-z0-9 _\-\(\)/]+)\s+\bmarketing\s+source\b', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+
+    # ----- PORTAL CAMPAIGN -----
+    elif entity_type == "portal_campaign":
+        # 'portal campaign name <name>' or 'portal campaign <name>'
+        m = re.search(r'\bportal\s+campaign(?:\s+name)?\b\s+([A-Za-z0-9 _\-\(\)/]+)', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+        # '<name> portal campaign'
+        m = re.search(r'([A-Za-z0-9 _\-\(\)/]+)\s+\bportal\s+campaign(?:\s+name)?\b', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+
+    # ----- CHANNEL / MAIN CHANNEL -----
+    elif entity_type == "channel":
+        # 'main channel retail ...'
+        m = re.search(r'\bmain\s+channel\b\s+([A-Za-z0-9 _\-\(\)/]+)', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+        # 'channel retail ...'
+        m = re.search(r'\bchannel\b\s+([A-Za-z0-9 _\-\(\)/]+)', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+        # '<name> channel'
+        m = re.search(r'([A-Za-z0-9 _\-\(\)/]+)\s+\bchannel\b', text, flags=re.IGNORECASE)
+        if m:
+            return _clean_entity_value(m.group(1))
+
+    # as an extra safety, try quotes: "... fast ..." etc.
+    m = re.search(r'"([^"]+)"', text)
+    if m:
+        return _clean_entity_value(m.group(1))
+
+    return None
+
 def choose_marketing_column(question, prefer=None):
     """
     Decide which marketing-related column to use based on the question text.
@@ -344,6 +425,151 @@ def run_sql_and_fetch_df(sql: str):
 # -------------------------
 # Safety & small helpers
 # -------------------------
+def handle_entity_details(question):
+    """
+    Returns details for one package, one marketing source, one portal campaign,
+    or one channel (main channel).
+    Example:
+        "show me the details about fast package"
+        "show me the performance of marketing source Google for last month"
+        "summary of portal campaign name ABC in 2024"
+        "give me the details for the main channel retail for last month"
+    """
+
+    ql = (question or "").lower()
+    date_col = DETECTED.get('date') or 'SaleDate'
+
+    # 1) Detect which entity type the user is talking about
+    if "marketing source" in ql:
+        entity_type = "marketing_source"
+        col = DETECTED.get("marketing_source")
+    elif "portal campaign" in ql or "portal campaign name" in ql:
+        entity_type = "portal_campaign"
+        col = DETECTED.get("portal_campaign")
+    elif "main channel" in ql or re.search(r'\bchannel\b', ql):
+        entity_type = "channel"
+        col = DETECTED.get("channel")
+    elif "package" in ql:
+        entity_type = "package"
+        col = DETECTED.get("package")
+    else:
+        return {
+            "reply": "Please specify whether you want details for a package, marketing source, main channel, or portal campaign.",
+            "table_html": "",
+            "plot_data_uri": None
+        }
+
+    if not col:
+        return {"reply": f"I could not find a column for '{entity_type}' in your dataset.", "table_html": "", "plot_data_uri": None}
+
+    # 2) Extract the exact value, e.g., "fast", "Google", "ABC", "retail"
+    target_value = _extract_entity_value(question, entity_type)
+    if not target_value:
+        return {
+            "reply": f"I couldn't figure out which {entity_type.replace('_', ' ')} you mean. Example: 'package fast', 'main channel retail', or 'marketing source Google'.",
+            "table_html": "",
+            "plot_data_uri": None
+        }
+
+    # 3) Apply time filter (month/year/relative)
+    month, year = parse_month_year_from_text(question)
+    rel = handle_relative_time(question, sale_date_col=date_col)
+
+    if month and not year:
+        return {
+            "reply": f"Please specify the year for '{calendar.month_name[month]}'. Example: 'July 2025'.",
+            "table_html": "",
+            "plot_data_uri": None
+        }
+
+    if month and year:
+        last_day = calendar.monthrange(year, month)[1]
+        start = date(year, month, 1).isoformat()
+        end = date(year, month, last_day).isoformat()
+        date_filter = f"CAST({date_col} AS DATE) BETWEEN DATE '{start}' AND DATE '{end}'"
+        period_text = f" for {calendar.month_name[month]} {year}"
+
+    elif year:
+        date_filter = f"STRFTIME('%Y',{date_col}) = '{year}'"
+        period_text = f" for {year}"
+
+    elif rel and rel.get("action") == "filter":
+        date_filter = rel["filter_sql"]
+        period_text = " for the selected period"
+
+    else:
+        # No date mentioned → use complete dataset
+        date_filter = "1=1"
+        period_text = ""
+
+    # 4) Final SQL
+    install_condition = "(install_date_parsed IS NOT NULL OR InstallDate IS NOT NULL OR IsInstalled = 1)"
+    profit_col = get_profit_col()
+    revenue_col = DETECTED.get("revenue") or "NetAfterCb"
+
+    # case-insensitive match for entity value
+    safe_target = target_value.replace("'", "''")
+    where_entity = f"LOWER(TRIM(COALESCE({col},''))) = LOWER('{safe_target}')"
+
+    sql = f"""
+        SELECT
+            STRFTIME('%Y-%m',{date_col}) AS month,
+            COUNT(*) AS orders,
+            SUM(CASE WHEN {install_condition} THEN 1 ELSE 0 END) AS installations,
+            SUM(CASE WHEN DisconnectDate IS NOT NULL THEN 1 ELSE 0 END) AS disconnections,
+            SUM(CAST({revenue_col} AS DOUBLE)) AS revenue,
+            SUM(CAST({profit_col} AS DOUBLE)) AS profit
+        FROM {TABLE}
+        WHERE {where_entity}
+        AND {date_filter}
+        GROUP BY month
+        ORDER BY month;
+    """
+
+    try:
+        df = run_sql_and_fetch_df(sql)
+    except Exception as e:
+        _log_and_mask_error(e, "entity_details_sql")
+        return _safe_user_error("I couldn't fetch details for that entity.")
+
+    if df is None or df.empty:
+        return {
+            "reply": f"No data found for {entity_type.replace('_',' ')} '{target_value}'{period_text}.",
+            "table_html": "",
+            "plot_data_uri": None
+        }
+
+    # summary row
+    total_orders = int(df["orders"].sum())
+    total_inst = int(df["installations"].sum())
+    total_disc = int(df["disconnections"].sum())
+    total_rev = float(df["revenue"].sum())
+    total_profit = float(df["profit"].sum())
+
+    summary = (
+        f"For {entity_type.replace('_', ' ')} '{target_value}'{period_text}: "
+        f"total orders = {total_orders:,}, installations = {total_inst:,}, "
+        f"disconnections = {total_disc:,}, revenue ≈ {total_rev:,.0f}, "
+        f"profit ≈ {total_profit:,.0f}"
+    )
+
+    table_html = rows_to_html_table(df.to_dict(orient="records"))
+
+    # Plot
+    plot_uri = plot_to_base64(
+        df["month"].astype(str).tolist(),
+        df["revenue"].fillna(0).tolist(),
+        kind="line",
+        title=f"Performance of {target_value}"
+    )
+
+    resp = {
+        "reply": summary,
+        "table_html": table_html,
+        "plot_data_uri": plot_uri,
+        "rows_returned": len(df)
+    }
+    return resp
 
 def _safe_user_error(msg=None):
     return {"reply": msg or "Sorry — I couldn't get that data. Please try rephrasing or ask for fewer filters.", "table_html": "", "plot_data_uri": None}
@@ -384,86 +610,92 @@ def _last_year_guard(text):
         }
     return None
 
-# -------------------------
-# Deterministic handlers
-# -------------------------
-
 def handle_top_packages_by_installations(question):
     try:
-        # parse month/year or year
+        ql = (question or "").lower()
+
+        # parse month/year
         month, year = parse_month_year_from_text(question)
+
         # parse limit
-        m = re.search(r'\btop\s+(\d{1,2})\b', question.lower())
+        m = re.search(r'\btop\s+(\d{1,2})\b', ql)
         limit = int(m.group(1)) if m else 10
-        include_null = bool(re.search(r'\b(include null|include nulls|include missing|include null package)\b', question.lower()))
+
+        include_null = bool(re.search(r'\b(include null|include nulls|include missing|include null package)\b', ql))
         date_col = DETECTED.get('date') or 'SaleDate'
         null_clause = "" if include_null else f"AND {_package_null_filter(include_null=False, colname='Package')}"
 
+        # ---- STRICT: month WITHOUT year -> ask user ----
         if month and not year:
-            # strict policy: ask the user to specify the year when only month provided
             month_name = calendar.month_name[month]
-            return {"reply": f"Please specify the year for '{month_name}' (for example: 'July 2025') so I can return that exact month.", "table_html": "", "plot_data_uri": None}
+            return {
+                "reply": f"Please specify the year for '{month_name}' (for example: 'July 2025') so I can return that exact month.",
+                "table_html": "",
+                "plot_data_uri": None
+            }
 
+        # ---- CASE 1: explicit month + year ----
         if month and year:
-            # compute start and end dates
             last_day = calendar.monthrange(year, month)[1]
             start = date(year, month, 1)
             end = date(year, month, last_day)
-            sql = f"""
-                SELECT Package AS package,
-                       SUM(CASE WHEN (install_date_parsed IS NOT NULL OR InstallDate IS NOT NULL OR IsInstalled = 1) THEN 1 ELSE 0 END) AS installations
-                FROM {TABLE}
-                WHERE CAST({date_col} AS DATE) BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}' {null_clause}
-                GROUP BY package
-                ORDER BY installations DESC
-                LIMIT {limit};
-            """
-            try:
-                df = run_sql_and_fetch_df(sql)
-            except Exception as e:
-                _log_and_mask_error(e, "top_packages_sql_exec")
-                return _safe_user_error("I couldn't compute top packages right now. Please try rephrasing or ask for a different period.")
-            if df is None or df.empty:
-                return {"reply": f"No installation data found for {calendar.month_name[month]} {year}.", "table_html":"", "plot_data_uri": None}
-            table_html, rows = _format_topk_table(df, 'package', 'installations')
-            top_list = [f"{r['package'] or '<NULL>'}: {int(r['installations']):,}" for r in rows]
-            explanation = f"Top {len(rows)} packages by installations for {calendar.month_name[month]} {year} (from {start.isoformat()} to {end.isoformat()}):\n" + "; ".join(top_list)
-            resp = {"reply": explanation, "table_html": table_html, "plot_data_uri": None, "rows_returned": len(rows)}
-            if DEBUG_SQL:
-                resp["debug_sql"] = sql
-            return resp
+            date_filter = f"CAST({date_col} AS DATE) BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'"
+            period_text = f" for {calendar.month_name[month]} {year} (from {start.isoformat()} to {end.isoformat()})"
 
-        # if no month but a year present
-        if year and not month:
-            sql = f"""
-                SELECT Package AS package,
-                       SUM(CASE WHEN (install_date_parsed IS NOT NULL OR InstallDate IS NOT NULL OR IsInstalled = 1) THEN 1 ELSE 0 END) AS installations
-                FROM {TABLE}
-                WHERE STRFTIME('%Y', {date_col}) = '{year}' {null_clause}
-                GROUP BY package
-                ORDER BY installations DESC
-                LIMIT {limit};
-            """
-            try:
-                df = run_sql_and_fetch_df(sql)
-            except Exception as e:
-                _log_and_mask_error(e, "top_packages_sql_exec_year")
-                return _safe_user_error("I couldn't compute top packages right now. Please try rephrasing or ask for a different period.")
-            if df is None or df.empty:
-                return {"reply": f"No installation data found for {year}.", "table_html":"", "plot_data_uri": None}
-            table_html, rows = _format_topk_table(df, 'package', 'installations')
-            top_list = [f"{r['package'] or '<NULL>'}: {int(r['installations']):,}" for r in rows]
-            explanation = f"Top {len(rows)} packages by installations in {year}:\n" + "; ".join(top_list)
-            resp = {"reply": explanation, "table_html": table_html, "plot_data_uri": None, "rows_returned": len(rows)}
-            if DEBUG_SQL:
-                resp["debug_sql"] = sql
-            return resp
+        # ---- CASE 2: explicit year ONLY ----
+        elif year and not month:
+            date_filter = f"STRFTIME('%Y', {date_col}) = '{year}'"
+            period_text = f" in {year}"
 
-        # neither month nor year: ambiguous — ask user to specify
-        return {"reply": "Please specify the month and year (e.g., 'July 2025') or a year (e.g., '2025') so I can return accurate top packages.", "table_html": "", "plot_data_uri": None}
+        else:
+            # ---- CASE 3: try relative phrases like 'last month', 'this month' etc. ----
+            rel = handle_relative_time(question, sale_date_col=date_col)
+            if rel and rel.get("action") == "filter":
+                date_filter = rel['filter_sql']
+                period_text = " for the selected period"
+            else:
+                # ---- CASE 4: no time info at all -> NO DATE FILTER (entire dataset) ----
+                date_filter = "1=1"
+                period_text = ""
+
+        sql = f"""
+            SELECT Package AS package,
+                   SUM(CASE WHEN (install_date_parsed IS NOT NULL OR InstallDate IS NOT NULL OR IsInstalled = 1) THEN 1 ELSE 0 END) AS installations
+            FROM {TABLE}
+            WHERE {date_filter} {null_clause}
+            GROUP BY package
+            ORDER BY installations DESC
+            LIMIT {limit};
+        """
+        try:
+            df = run_sql_and_fetch_df(sql)
+        except Exception as e:
+            _log_and_mask_error(e, "top_packages_sql_exec")
+            return _safe_user_error("I couldn't compute top packages right now. Please try rephrasing or ask for a different period.")
+
+        if df is None or df.empty:
+            return {
+                "reply": f"No installation data found{period_text or ''}.",
+                "table_html": "",
+                "plot_data_uri": None
+            }
+
+        table_html, rows = _format_topk_table(df, 'package', 'installations')
+        top_list = [f"{r['package'] or '<NULL>'}: {int(r['installations']):,}" for r in rows]
+        explanation = f"Top {len(rows)} packages by installations{period_text}:\n" + "; ".join(top_list)
+        resp = {
+            "reply": explanation,
+            "table_html": table_html,
+            "plot_data_uri": None,
+            "rows_returned": len(rows)
+        }
+        if DEBUG_SQL:
+            resp["debug_sql"] = sql
+        return resp
 
     except Exception as e:
         return _safe_user_error(_log_and_mask_error(e, "top_packages_by_installations"))
+
 
 def handle_top_packages_by_profit(question):
     """
@@ -682,225 +914,6 @@ def handle_monthly_revenue_last_year(question):
     except Exception as e:
         return _safe_user_error(_log_and_mask_error(e, "monthly_revenue_last_year"))
 
-def handle_entity_details(question):
-    """
-    Detailed performance summary for a specific:
-      - package
-      - marketing source
-      - portal campaign
-    Supports flexible phrasing like:
-      - "fast package"
-      - "package fast"
-      - "package name fast"
-      - "marketing source Google"
-      - "Google marketing source"
-      - "marketing source name Google"
-    """
-    try:
-        guard = _last_year_guard(question)
-        if guard:
-            return guard
-
-        ql = (question or "").lower()
-
-        def qident(name: str) -> str:
-            return f"\"{name.replace('\"', '\"\"')}\""
-
-        # 1) decide entity type
-        if 'marketing source' in ql:
-            entity_type = 'marketing_source'
-        elif 'portal campaign' in ql:
-            entity_type = 'portal_campaign'
-        elif 'package' in ql:
-            entity_type = 'package'
-        else:
-            return {"reply": "Please specify whether you want details for a package, a marketing source, or a portal campaign.", "table_html": "", "plot_data_uri": None}
-
-        # 2) map entity type -> column
-        ent_col = None
-        if entity_type == 'package':
-            ent_col = DETECTED.get('package') or find_best(COLS, ['Package', 'Product', 'Plan', 'Offering'])
-        elif entity_type == 'marketing_source':
-            ent_col = DETECTED.get('marketing_source')
-        elif entity_type == 'portal_campaign':
-            ent_col = DETECTED.get('portal_campaign')
-
-        if not ent_col:
-            return {"reply": f"I couldn't find a column for '{entity_type.replace('_',' ')}' in the dataset. Please check your column names.", "table_html": "", "plot_data_uri": None}
-
-        # 3) extract entity value (robust patterns, no more "about ... package" capturing 'the')
-        ent_value = None
-
-        if entity_type == 'package':
-            patterns = [
-                # "package name fast ..." / "package fast ..."
-                r'\bpackage name\s+([A-Za-z0-9 _\-]+?)(?=\s+(for|on|in|last|this|current|previous|next)\b|[.,!?]|$)',
-                r'\bpackage\s+([A-Za-z0-9 _\-]+?)(?=\s+(for|on|in|last|this|current|previous|next)\b|[.,!?]|$)',
-                # "fast package"
-                r"\b([A-Za-z0-9 _\-]+?)\s+package\b",
-                # "'fast' package"
-                r"'([^']+)'\s+package\b",
-            ]
-        elif entity_type == 'marketing_source':
-            patterns = [
-                # "marketing source name Google ..." / "marketing source Google ..."
-                r'\bmarketing source name\s+([A-Za-z0-9 _\-]+?)(?=\s+(for|on|in|last|this|current|previous|next)\b|[.,!?]|$)',
-                r'\bmarketing source\s+([A-Za-z0-9 _\-]+?)(?=\s+(for|on|in|last|this|current|previous|next)\b|[.,!?]|$)',
-                # "Google marketing source"
-                r'\b([A-Za-z0-9 _\-]+?)\s+marketing source\b',
-                # "'Google' marketing source"
-                r"'([^']+)'\s+marketing source\b",
-            ]
-        else:  # portal_campaign
-            patterns = [
-                # "portal campaign name Google ..." / "portal campaign Google ..."
-                r'\bportal campaign name\s+([A-Za-z0-9 _\-]+?)(?=\s+(for|on|in|last|this|current|previous|next)\b|[.,!?]|$)',
-                r'\bportal campaign\s+([A-Za-z0-9 _\-]+?)(?=\s+(for|on|in|last|this|current|previous|next)\b|[.,!?]|$)',
-                # "Google portal campaign"
-                r'\b([A-Za-z0-9 _\-]+?)\s+portal campaign\b',
-                # "'Google' portal campaign"
-                r"'([^']+)'\s+portal campaign\b",
-            ]
-
-        for pat in patterns:
-            m = re.search(pat, question, flags=re.IGNORECASE)
-            if m:
-                ent_value = m.group(1).strip(" '\"")
-                break
-
-        if not ent_value:
-            return {"reply": f"Please specify the exact name of the {entity_type.replace('_',' ')}. For example: 'details about fast package for last month'.", "table_html": "", "plot_data_uri": None}
-
-        # 4) time filter
-        date_col = DETECTED.get('date') or 'SaleDate'
-        date_ident = qident(date_col)
-        ent_ident = qident(ent_col)
-        where_clauses = []
-        period_text = ""
-
-        # case-insensitive equality for entity
-        ent_value_lower = ent_value.lower()
-        ent_value_escaped = ent_value_lower.replace("'", "''")
-        where_clauses.append(f"LOWER({ent_ident}) = '{ent_value_escaped}'")
-
-        rel = handle_relative_time(question, sale_date_col=date_col)
-        if rel and rel.get('action') == 'filter':
-            where_clauses.append(rel['filter_sql'])
-            period_text = " for the selected period"
-        else:
-            month, year = parse_month_year_from_text(question)
-            if not year:
-                m_y = re.search(r'\b(20\d{2})\b', question)
-                if m_y:
-                    year = int(m_y.group(1))
-
-            if month and not year:
-                return {"reply": f"Please specify the year for '{calendar.month_name[month]}' (for example: 'July 2025').", "table_html": "", "plot_data_uri": None}
-
-            if month and year:
-                last_day = calendar.monthrange(year, month)[1]
-                start = date(year, month, 1)
-                end = date(year, month, last_day)
-                where_clauses.append(f"CAST({date_ident} AS DATE) BETWEEN DATE '{start.isoformat()}' AND DATE '{end.isoformat()}'")
-                period_text = f" for {calendar.month_name[month]} {year} (from {start.isoformat()} to {end.isoformat()})"
-            elif year and not month:
-                where_clauses.append(f"STRFTIME('%Y',{date_ident}) = '{year}'")
-                period_text = f" for {year}"
-
-        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-
-        # metrics
-        install_condition = "(install_date_parsed IS NOT NULL OR InstallDate IS NOT NULL OR IsInstalled = 1)"
-        disconnect_condition = "(DisconnectDate IS NOT NULL OR LOWER(COALESCE(Status,'')) LIKE '%disconnect%')"
-
-        rev_col = DETECTED.get('revenue') if DETECTED.get('revenue') in COLS else None
-        profit_col = get_profit_col()
-
-        metrics_expr = [
-            f"STRFTIME('%Y-%m',{date_ident}) AS month",
-            "COUNT(*) AS orders",
-            f"SUM(CASE WHEN {install_condition} THEN 1 ELSE 0 END) AS installations",
-            f"SUM(CASE WHEN {disconnect_condition} THEN 1 ELSE 0 END) AS disconnections"
-        ]
-        if rev_col and rev_col in COLS:
-            metrics_expr.append(f"SUM(CAST(\"{rev_col}\" AS DOUBLE)) AS revenue")
-        if profit_col and profit_col in COLS:
-            metrics_expr.append(f"SUM(CAST(\"{profit_col}\" AS DOUBLE)) AS profit")
-
-        metrics_sql = ",\n                   ".join(metrics_expr)
-
-        sql = f"""
-            SELECT {metrics_sql}
-            FROM {TABLE}
-            WHERE {where_sql}
-            GROUP BY STRFTIME('%Y-%m',{date_ident})
-            ORDER BY month;
-        """
-
-        try:
-            df = run_sql_and_fetch_df(sql)
-        except Exception as e:
-            _log_and_mask_error(e, "handle_entity_details_sql_exec")
-            return _safe_user_error("I couldn't compute the details for that entity. Please try rephrasing.")
-
-        if df is None or df.empty:
-            return {"reply": f"No data found for {entity_type.replace('_',' ')} '{ent_value}'{period_text}.", "table_html": "", "plot_data_uri": None}
-
-        cols = df.columns.tolist()
-
-        def col_sum(name):
-            return float(df[name].sum()) if name in cols else None
-
-        tot_orders = int(col_sum('orders')) if 'orders' in cols else 0
-        tot_installs = int(col_sum('installations')) if 'installations' in cols else None
-        tot_disconnects = int(col_sum('disconnections')) if 'disconnections' in cols else None
-        tot_revenue = col_sum('revenue') if 'revenue' in cols else None
-        tot_profit = col_sum('profit') if 'profit' in cols else None
-
-        parts = [f"For {entity_type.replace('_',' ')} '{ent_value}'{period_text}:"]
-        parts.append(f" total orders = {tot_orders:,}")
-        if tot_installs is not None:
-            parts.append(f", installations = {tot_installs:,}")
-        if tot_disconnects is not None:
-            parts.append(f", disconnections = {tot_disconnects:,}")
-        if tot_revenue is not None:
-            parts.append(f", revenue ≈ {tot_revenue:,.0f}")
-        if tot_profit is not None:
-            parts.append(f", profit ≈ {tot_profit:,.0f}")
-
-        explanation = "".join(parts)
-        table_html = rows_to_html_table(df.to_dict(orient='records'))
-
-        plot_uri = None
-        try:
-            x = df['month'].astype(str).tolist()
-            if 'revenue' in cols:
-                y = df['revenue'].fillna(0).tolist()
-                title = f"Revenue by month for {ent_value}"
-            elif 'installations' in cols:
-                y = df['installations'].fillna(0).tolist()
-                title = f"Installations by month for {ent_value}"
-            else:
-                y = df['orders'].fillna(0).tolist()
-                title = f"Orders by month for {ent_value}"
-            plot_uri = plot_to_base64(x, y, kind='line', title=title)
-        except Exception as e:
-            print("Plot error in handle_entity_details:", e, traceback.format_exc())
-            plot_uri = None
-
-        resp = {
-            "reply": explanation,
-            "table_html": table_html,
-            "plot_data_uri": plot_uri,
-            "rows_returned": len(df)
-        }
-        if DEBUG_SQL:
-            resp["debug_sql"] = sql
-            resp["entity_type"] = entity_type
-            resp["entity_value"] = ent_value
-        return resp
-    except Exception as e:
-        return _safe_user_error(_log_and_mask_error(e, "handle_entity_details"))
 
 def handle_top_by_entity(question, entity_type='package'):
     """
@@ -1348,14 +1361,15 @@ def chat():
     print(f"DEBUG: Question='{question}'")
     print(f"DEBUG: qlow='{qlow}'")
     # ========== END DEBUGGING ==========
-
-    # 0) Details / performance / summary for specific package / marketing source / portal campaign
-    if (re.search(r'\b(detail|details|performance|summary)\b', qlow)
-            and re.search(r'\b(package|marketing source|portal campaign)\b', qlow)):
-        try:
-            return jsonify(handle_entity_details(question))
-        except Exception as e:
-            return jsonify(_safe_user_error(_log_and_mask_error(e, "entity_details_dispatch"))), 500
+    # DETAILS / PERFORMANCE / SUMMARY QUERIES
+    if re.search(r'\b(details?|performance|summary)\b', qlow) and (
+        "package" in qlow
+        or "marketing source" in qlow
+        or "portal campaign" in qlow
+        or "main channel" in qlow
+        or re.search(r'\bchannel\b', qlow)
+    ):
+        return jsonify(handle_entity_details(question))
 
     # 1) Explicit top marketing source / portal campaign
     if re.search(r'\btop\b.*\bmarketing source', qlow):
@@ -1452,7 +1466,6 @@ def chat():
         except Exception as e:
             _log_and_mask_error(e, "fetch_columns")
             return jsonify(_safe_user_error("Could not fetch columns right now.")), 500
-
     rel = handle_relative_time(question, sale_date_col=(DETECTED.get('date') or 'SaleDate'))
     if rel:
         if rel.get("action") == "now":
