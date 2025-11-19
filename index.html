@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BUNDLE AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; font-family:'Inter',sans-serif; }
+    :root{
+      --sidebar-bg: #071226;
+      --accent: #06a3ff;
+      --muted: #9fb0c9;
+      --panel: #0f1724;
+      --card: #0b1220;
+      --surface: #f6f9fb;
+      --glass: rgba(255,255,255,0.04);
+    }
+    body { margin:0; height:100vh; display:flex; background:linear-gradient(180deg,#f3f7fb 0%, #eef4fb 100%); color:#0b1b2b; }
+
+    /* Sidebar */
+    .sidebar { width:320px; background: linear-gradient(180deg,var(--sidebar-bg), #081526 80%); color:#fff; display:flex; flex-direction:column; padding:20px; gap:12px; box-shadow: 4px 0 30px rgba(2,6,23,0.45); }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .brand .logo {
+      width:56px; height:56px; border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center;
+      background:transparent; flex-shrink:0;
+    }
+    .brand .logo img{ width:100%; height:100%; object-fit:contain; display:block; }
+    .brand .title { display:flex; flex-direction:column; }
+    .brand .title .h { font-weight:700; font-size:1.05rem; letter-spacing:0.6px; color:#e6f2ff; }
+    .brand .title .sub { font-size:0.82rem; color:var(--muted); margin-top:4px; }
+
+    .new-chat-btn { background:linear-gradient(90deg,var(--accent), #00c2ff); color:#042a3a; border:none; padding:12px; border-radius:12px; cursor:pointer; font-weight:700; box-shadow: 0 6px 18px rgba(3,115,212,0.18); }
+    .new-chat-btn:hover { transform:translateY(-1px); }
+
+    .chats { overflow-y:auto; flex:1; margin-top:6px; padding-right:6px; }
+    .chat-item { padding:12px; border-radius:10px; margin-bottom:10px; cursor:pointer; background:transparent; border:1px solid rgba(255,255,255,0.04); display:flex; justify-content:space-between; align-items:center; gap:12px; transition:all .12s; }
+    .chat-item.active { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); box-shadow: inset 0 1px 0 rgba(255,255,255,0.02); }
+    .chat-meta { display:flex; flex-direction:column; flex:1; min-width:0; }
+    .chat-title { font-weight:600; color:#e6eefc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:0.95rem; }
+    .chat-time { color:var(--muted); font-size:0.82rem; margin-top:6px; }
+    .chat-controls { display:flex; gap:8px; opacity:0; transition:opacity .12s; align-items:center; }
+    .chat-item:hover .chat-controls { opacity:1; }
+    .icon-btn { background:transparent; border:none; color:#cbe7ff; padding:6px; border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+    .icon-btn.del { color:#ffb4b4; }
+
+    /* Main area */
+    .main { flex:1; display:flex; flex-direction:column; }
+    header {
+      background: linear-gradient(90deg,#041226 0%, #08305a 40%, #0a3a73 100%);
+      color:white; padding:22px 28px; display:flex; align-items:center; gap:18px;
+      box-shadow: 0 6px 28px rgba(3,8,23,0.25);
+    }
+    header .top-left { display:flex; align-items:center; gap:12px; }
+    header .title { font-size:1.25rem; font-weight:700; letter-spacing:0.6px; color:#e6f7ff; }
+    header .subtitle { color: #bcdcff; font-size:0.9rem; margin-left:6px; font-weight:500; opacity:0.9; }
+
+    .content { display:flex; flex-direction:column; gap:12px; padding:22px; height: calc(100vh - 120px); overflow:auto; align-items:center; }
+    .chat-column { width:100%; max-width:1100px; display:flex; flex-direction:column; gap:16px; }
+
+    .chat-message { display:flex; flex-direction:column; position:relative; }
+    .user { align-self:flex-end; background:linear-gradient(180deg,#e9f4ff,#e6f2ff); color:#003771; padding:12px 16px; border-radius:12px 12px 6px 12px; max-width:78%; white-space:pre-wrap; word-break:break-word; box-shadow: 0 6px 18px rgba(4,84,160,0.06); }
+    .bot { background:#fff; color:#0b2133; border-radius:8px; padding:18px; max-width:100%; border:1px solid #e6eef6; box-shadow: 0 8px 30px rgba(11,26,40,0.04); }
+    .bot strong { color:var(--accent); }
+    .bot img { max-width:100%; border-radius:10px; margin-top:12px; display:block; margin-left:auto; margin-right:auto; }
+    .bot table { width:100%; border-collapse:collapse; margin-top:12px; }
+    .bot table, .bot th, .bot td { border:1px solid #eef4fb; }
+    .bot th, .bot td { padding:8px 10px; text-align:left; font-size:0.95rem; }
+
+    footer { padding:14px; background:#fff; border-top:1px solid #e6edf8; display:flex; gap:10px; align-items:center; justify-content:center; position:sticky; bottom:0; }
+    #user-input { flex:1; padding:12px 14px; border-radius:12px; border:1px solid #e0e6ef; font-size:1rem; box-shadow: inset 0 1px 0 rgba(255,255,255,0.6); }
+    #send-btn { background:linear-gradient(90deg,var(--accent), #02d0ff); color:#042a3a; border:none; padding:10px 18px; border-radius:12px; cursor:pointer; font-weight:700; box-shadow: 0 6px 18px rgba(3,115,212,0.14); }
+
+    /* per-message controls (icons) */
+    .msg-controls {
+      position: absolute;
+      top: 6px;
+      right: -6px;
+      display:flex;
+      gap:8px;
+      opacity:0;
+      transition:opacity .12s;
+      z-index:5;
+    }
+    .chat-message:hover .msg-controls { opacity:1; }
+    .msg-btn { background: rgba(255,255,255,0.04); border: 1px solid rgba(0,0,0,0.06); padding:6px; border-radius:8px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; width:38px; height:34px; }
+    .msg-btn svg { width:16px; height:16px; display:block; }
+
+    /* small helpers for long content */
+    .bot-content { white-space: pre-wrap; word-break: break-word; line-height:1.5; color:#0b2936; }
+    .bot-table { margin-top:8px; overflow-x:auto; }
+
+    /* responsive */
+    @media (max-width:900px){ .sidebar{display:none;} .chat-column{max-width:100%; padding:0 12px;} .main header{padding:14px;} }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="brand">
+      <div class="logo">
+        <!-- Put your logo file in the same folder as this index.html with this filename -->
+        <img src="/static/bundle_logo.png" alt="Bundle AI logo" />
+      </div>
+      <div class="title">
+        <div id="sidebar-app-title" class="h">BUNDLE AI</div>
+        <div class="sub">Smart enterprise analytics</div>
+      </div>
+    </div>
+
+    <button id="new-chat" class="new-chat-btn">+ New chat</button>
+    <div style="font-size:0.9rem;color:#cbd5e1;margin-top:6px;">Chats</div>
+    <div id="chats" class="chats"></div>
+    <div style="font-size:0.8rem;color:#94a3b8;margin-top:8px;">Saved on server · shows chat title & time</div>
+  </div>
+
+  <div class="main">
+    <header>
+      <div class="top-left">
+        <!-- Give the top header an id so we can update it dynamically -->
+        <div id="top-header" class="title">BUNDLE AI</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="chat-column" id="chat-column">
+        <!-- messages appended here -->
+      </div>
+    </div>
+
+    <footer>
+      <input id="user-input" placeholder="Type your question..." autocomplete="off" />
+      <button id="send-btn">Ask</button>
+    </footer>
+  </div>
+
+<script>
+  // ---- State ----
+  let currentChatId = null;
+  let chatsIndex = {}; // id -> meta
+  let messagesCache = {}; // id -> array of messages (each: {role, text, table_html, plot_data_uri, time})
+
+  const chatsEl = document.getElementById('chats');
+  const chatColumn = document.getElementById('chat-column');
+  const input = document.getElementById('user-input');
+  const sendBtn = document.getElementById('send-btn');
+  const newBtn = document.getElementById('new-chat');
+  // topHeader element now exists (we added id in HTML)
+  const topHeader = document.getElementById('top-header');
+
+  function formatDate(ts){ const d = new Date(ts); return d.toLocaleString(); }
+  function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // -------------------------
+  // per-visitor session id (cookie) — ADDED: do not remove
+  // -------------------------
+  function uuidv4() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return m ? decodeURIComponent(m[2]) : null;
+  }
+  function setCookie(name, value, days=365) {
+    const d = new Date(); d.setTime(d.getTime() + (days*24*60*60*1000));
+    // Use SameSite=Lax to align with server-side cookie behaviour; include Secure when on HTTPS.
+    const secure = location.protocol === 'https:' ? ';Secure' : '';
+    document.cookie = `${name}=${encodeURIComponent(value)};path=/;expires=${d.toUTCString()};SameSite=Lax${secure}`;
+  }
+  function getSessionId() {
+    // keep client-side session cookie name as 'sid' to match server naming (server also sets an HttpOnly 'sid')
+    let sid = getCookie('sid');
+    if (!sid) {
+      // if server hasn't set an HttpOnly sid yet (first visit), create a client-side fallback 'sid'
+      sid = uuidv4();
+      setCookie('sid', sid, 365);
+    }
+    return sid;
+  }
+  const SESSION_ID = getSessionId();
+  // -------------------------
+  // End session id code
+  // -------------------------
+
+  // -------------------------
+  // Helper to set header title (keeps the top bar in sync)
+  // -------------------------
+  function setTopHeaderTitle(title){
+    try {
+      if(!topHeader) return;
+      topHeader.textContent = title || 'New Chat';
+    } catch(e){
+      console.warn('setTopHeaderTitle failed', e);
+    }
+  }
+
+  // render chat list items
+  function renderChatList(){
+    chatsEl.innerHTML = '';
+    const list = Object.values(chatsIndex).sort((a,b)=> (b.created_at||0) - (a.created_at||0));
+    list.forEach(meta=>{
+      const item = document.createElement('div');
+      item.className = 'chat-item' + (meta.id===currentChatId ? ' active' : '');
+      const metaDiv = document.createElement('div'); metaDiv.className='chat-meta';
+      const titleDiv = document.createElement('div'); titleDiv.className='chat-title'; titleDiv.title = meta.title || 'Chat';
+      titleDiv.innerText = meta.title || 'Chat';
+      const tdiv = document.createElement('div'); tdiv.className='chat-time'; tdiv.innerText = meta.created_at ? formatDate(meta.created_at) : '';
+      metaDiv.appendChild(titleDiv); metaDiv.appendChild(tdiv);
+
+      const controls = document.createElement('div'); controls.className='chat-controls';
+      // rename button (pencil icon)
+      const renameBtn = document.createElement('button'); renameBtn.className='icon-btn'; renameBtn.title='Rename';
+      renameBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="#cbe7ff"/><path d="M20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" fill="#cbe7ff"/></svg>';
+      renameBtn.onclick = (ev)=>{ ev.stopPropagation(); renameChat(meta.id); };
+
+      // delete button
+      const delBtn = document.createElement('button'); delBtn.className='icon-btn del'; delBtn.title='Delete';
+      delBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 7h12" stroke="#ffb4b4" stroke-width="1.6" stroke-linecap="round"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" stroke="#ffb4b4" stroke-width="1.6" stroke-linecap="round"/><path d="M19 7l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7" stroke="#ffb4b4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      delBtn.onclick = (ev)=>{ ev.stopPropagation(); deleteChat(meta.id); };
+
+      controls.appendChild(renameBtn); controls.appendChild(delBtn);
+
+      item.appendChild(metaDiv);
+      item.appendChild(controls);
+      item.onclick = ()=> loadConversation(meta.id);
+      chatsEl.appendChild(item);
+    });
+  }
+
+  // create message element with icon copy/delete controls (no edit)
+  function createMessageElement(msg, index){
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat-message';
+    // message controls container (icons)
+    const controls = document.createElement('div');
+    controls.className = 'msg-controls';
+
+    // copy icon button
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'msg-btn copy';
+    copyBtn.title = 'Copy Q & A';
+    copyBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="9" y="9" width="10" height="10" rx="2" stroke="#0648c8" stroke-width="1.4"/><rect x="4" y="4" width="10" height="10" rx="2" stroke="#0648c8" stroke-width="1.4"/></svg>';
+    copyBtn.onclick = (ev) => { ev.stopPropagation(); handleCopy(msg, index); };
+
+    // delete icon button
+    const delBtn = document.createElement('button');
+    delBtn.className = 'msg-btn del';
+    delBtn.title = 'Delete message';
+    delBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18" stroke="#ff2e62" stroke-width="1.6" stroke-linecap="round"/><path d="M8 6v12a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2V6" stroke="#ff2e62" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2" stroke="#ff2e62" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    delBtn.onclick = (ev) => { ev.stopPropagation(); handleDelete(msg, index); };
+
+    controls.appendChild(copyBtn);
+    controls.appendChild(delBtn);
+    wrapper.appendChild(controls);
+
+    // render content
+    if(msg.role === 'user'){
+      const content = document.createElement('div');
+      content.className = 'user';
+      content.innerText = msg.text || '';
+      wrapper.appendChild(content);
+    } else {
+      // bot message
+      const content = document.createElement('div');
+      content.className = 'bot';
+      const title = document.createElement('div');
+      title.innerHTML = `<strong>Bot:</strong>`;
+      const body = document.createElement('div');
+      body.className = 'bot-content';
+      body.innerHTML = escapeHtml(msg.text || '').replace(/\n/g, '<br>');
+      content.appendChild(title);
+      content.appendChild(body);
+      // table html (raw from server)
+      if(msg.table_html){
+        const tableWrap = document.createElement('div');
+        tableWrap.className = 'bot-table';
+        tableWrap.innerHTML = msg.table_html;
+        content.appendChild(tableWrap);
+      }
+      if(msg.plot_data_uri){
+        const img = document.createElement('img');
+        img.src = msg.plot_data_uri;
+        img.alt = 'chart';
+        content.appendChild(img);
+      }
+      wrapper.appendChild(content);
+    }
+    return wrapper;
+  }
+
+  // render all messages for current chat (uses messagesCache[currentChatId])
+  function renderMessagesForCurrentChat(){
+    chatColumn.innerHTML = '';
+    // header title (if you want to display chat title in main area you can add here)
+    const msgs = messagesCache[currentChatId] || [];
+    msgs.forEach((m, idx) => {
+      const el = createMessageElement(m, idx);
+      chatColumn.appendChild(el);
+    });
+    // scroll to bottom
+    chatColumn.scrollTop = chatColumn.scrollHeight;
+  }
+
+  // load list from server
+  async function loadChatsIndex(){
+    try {
+      // We use a simple "seen" cookie to distinguish first-time visitors from returning visitors.
+      // Requirement: first-time visitor should NOT see anyone else's chats; they see a fresh new chat.
+      const seen = getCookie('bundle_seen_before');
+      if (!seen) {
+        // mark as seen for future visits
+        setCookie('bundle_seen_before', '1', 365);
+        // create a brand new chat for this visitor and do not preload server chat list
+        await createNewChat();
+        return;
+      }
+
+      // For returning visitors, fetch server-side chats for this SESSION_ID
+      const res = await fetch('/memory/list?sid=' + encodeURIComponent(SESSION_ID));
+      const j = await res.json();
+      if(j && Array.isArray(j.chats)){
+        chatsIndex = {};
+        j.chats.forEach(c => chatsIndex[c.id] = c);
+        // if none, create new chat
+        if(!currentChatId){
+          if(j.chats.length) await loadConversation(j.chats[0].id);
+          else await createNewChat();
+        } else {
+          renderChatList();
+          // ensure current is in index
+          if(!chatsIndex[currentChatId]){
+            if(j.chats.length) await loadConversation(j.chats[0].id);
+            else await createNewChat();
+          }
+        }
+      } else {
+        await createNewChat();
+      }
+    } catch(e){
+      console.warn('loadChatsIndex failed', e);
+      await createNewChat();
+    }
+  }
+
+  async function createNewChat(){
+    const id = 'chat-' + Date.now();
+    currentChatId = id;
+    chatsIndex[id] = { id, title: 'New chat', created_at: Date.now() };
+    messagesCache[id] = [];
+    renderChatList();
+    renderMessagesForCurrentChat();
+    setTopHeaderTitle(chatsIndex[id].title); // update top header when new chat created
+    await saveConversationToServer(id); // persist right away
+  }
+
+  async function loadConversation(id){
+    try {
+      const res = await fetch('/memory/load?id=' + encodeURIComponent(id) + '&sid=' + encodeURIComponent(SESSION_ID));
+      if(res.status===200){
+        const j = await res.json();
+        currentChatId = id;
+        messagesCache[id] = j.messages || [];
+        chatsIndex[id] = { id, title: j.title || 'Chat', created_at: j.created_at || Date.now() };
+        renderChatList();
+        renderMessagesForCurrentChat();
+        setTopHeaderTitle(chatsIndex[id].title); // update top header when loading
+      } else {
+        // not found -> create new
+        await createNewChat();
+      }
+    } catch(e){
+      console.warn('loadConversation err', e);
+      await createNewChat();
+    }
+  }
+
+  async function saveConversationToServer(id){
+    const payload = {
+      sid: SESSION_ID,
+      id,
+      title: (chatsIndex[id] && chatsIndex[id].title) || 'Chat',
+      created_at: (chatsIndex[id] && chatsIndex[id].created_at) || Date.now(),
+      messages: messagesCache[id] || []
+    };
+    try {
+      await fetch('/memory/save', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+      });
+      // refresh local list (keeps server in sync)
+      await loadChatsIndex();
+    } catch(e){
+      console.warn('saveConversation failed', e);
+    }
+  }
+
+  async function deleteChat(id){
+    if(!confirm('Delete this chat? This cannot be undone from the UI.')) return;
+    try {
+      const res = await fetch('/memory/delete', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id, sid: SESSION_ID })
+      });
+      const j = await res.json();
+      if(j && j.ok){
+        delete chatsIndex[id];
+        delete messagesCache[id];
+        // choose another chat or create
+        const keys = Object.keys(chatsIndex);
+        if(keys.length) await loadConversation(keys[0]);
+        else await createNewChat();
+      } else {
+        alert('Delete failed');
+      }
+    } catch(e){
+      console.warn('deleteChat err', e);
+      alert('Delete failed');
+    }
+  }
+
+  async function renameChat(id){
+    const meta = chatsIndex[id] || {};
+    const current = meta.title || '';
+    const newTitle = prompt('Rename chat', current);
+    if(newTitle === null) return; // cancelled
+    chatsIndex[id].title = newTitle || 'Chat';
+    renderChatList();
+    // update server copy: load existing messages if missing
+    messagesCache[id] = messagesCache[id] || [];
+    await saveConversationToServer(id);
+    setTopHeaderTitle(chatsIndex[id].title); // update top header after rename
+  }
+
+  // Copy handler: copy either single message or user+bot pair when invoked on user message
+  function handleCopy(msg, idx){
+    try {
+      let textToCopy = '';
+      if(msg.role === 'user'){
+        // copy question + immediate bot reply if exists
+        textToCopy += `Q: ${msg.text}\n`;
+        const msgs = messagesCache[currentChatId] || [];
+        const next = msgs[idx+1];
+        if(next && next.role === 'bot'){
+          textToCopy += `A: ${next.text}\n`;
+        }
+      } else {
+        // bot message: copy only bot text
+        textToCopy = `A: ${msg.text}\n`;
+      }
+      navigator.clipboard.writeText(textToCopy).then(()=> {
+        // small visual feedback (optional)
+        // use a subtle notificaton rather than alert
+        const n = document.createElement('div');
+        n.textContent = 'Copied to clipboard';
+        n.style.position='fixed'; n.style.right='20px'; n.style.bottom='24px';
+        n.style.padding='8px 12px'; n.style.background='#001a40'; n.style.color='#fff'; n.style.borderRadius='8px';
+        n.style.boxShadow='0 6px 18px rgba(2,6,23,0.5)'; document.body.appendChild(n);
+        setTimeout(()=> n.remove(), 1200);
+      }, (err)=> {
+        alert('Copy failed: ' + err);
+      });
+    } catch(e){
+      console.warn('copy error', e);
+      alert('Copy failed');
+    }
+  }
+
+  // Delete handler: delete message at idx. If user message, also delete immediate bot reply (if present)
+  async function handleDelete(msg, idx){
+    if(!confirm('Delete this message?')) return;
+    const arr = messagesCache[currentChatId] || [];
+    if(!Array.isArray(arr)) return;
+    if(idx < 0 || idx >= arr.length) return;
+
+    if(arr[idx].role === 'user'){
+      // remove user message and next bot if present
+      arr.splice(idx, 1);
+      if(idx < arr.length && arr[idx].role === 'bot'){
+        arr.splice(idx, 1);
+      }
+    } else {
+      // bot message only
+      arr.splice(idx, 1);
+    }
+    // update cache and UI, then persist
+    messagesCache[currentChatId] = arr;
+    // update chat title (first user message) if needed
+    const firstUser = arr.find(m => m.role === 'user');
+    chatsIndex[currentChatId].title = firstUser ? (firstUser.text.slice(0,40) + (firstUser.text.length>40 ? '...' : '')) : 'Chat';
+    setTopHeaderTitle(chatsIndex[currentChatId].title); // update header after deleting messages which may change title
+    await saveConversationToServer(currentChatId);
+    renderChatList();
+    renderMessagesForCurrentChat();
+  }
+
+  // send message flow
+  async function sendMessage(){
+    const text = input.value.trim();
+    if(!text) return;
+    if(!currentChatId) await createNewChat();
+
+    // add user message locally
+    messagesCache[currentChatId] = messagesCache[currentChatId] || [];
+    const userMsg = { role:'user', text, time: Date.now() };
+    messagesCache[currentChatId].push(userMsg);
+    await saveConversationToServer(currentChatId); // persist before sending to server
+
+    renderMessagesForCurrentChat();
+    input.value = '';
+
+    // typing indicator element
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'chat-message';
+    typingDiv.innerHTML = `<div class="bot" style="font-style:italic;color:#6b7280">Bot is thinking...</div>`;
+    chatColumn.appendChild(typingDiv);
+    typingDiv.scrollIntoView({behavior:'smooth'});
+
+    try {
+      // NOTE: include session id and chat id in /chat payload so server can associate responses if desired
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, sid: SESSION_ID, chat_id: currentChatId })
+      });
+      const data = await res.json();
+      typingDiv.remove();
+
+      const replyText = data.reply || '(no reply)';
+      const table_html = data.table_html || '';
+      const plot_data_uri = data.plot_data_uri || data.plot_uri || '';
+
+      // append bot message locally
+      const botMsg = { role:'bot', text: replyText, table_html, plot_data_uri, time: Date.now() };
+      messagesCache[currentChatId].push(botMsg);
+      // set chat title to first user message (short)
+      const firstUser = messagesCache[currentChatId].find(m => m.role==='user');
+      chatsIndex[currentChatId].title = firstUser ? (firstUser.text.slice(0,40) + (firstUser.text.length>40 ? '...' : '')) : 'Chat';
+      setTopHeaderTitle(chatsIndex[currentChatId].title); // update header when title changes after send
+      await saveConversationToServer(currentChatId);
+
+      renderChatList();
+      renderMessagesForCurrentChat();
+    } catch(err){
+      typingDiv.remove();
+      const errMsg = { role:'bot', text: '⚠️ Error connecting to server: ' + (err.message || err), time: Date.now() };
+      messagesCache[currentChatId].push(errMsg);
+      await saveConversationToServer(currentChatId);
+      renderMessagesForCurrentChat();
+    }
+  }
+
+  // wire UI
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
+  newBtn.addEventListener('click', createNewChat);
+
+  // init
+  loadChatsIndex();
+</script>
+</body>
+</html>
