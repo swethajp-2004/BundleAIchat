@@ -1238,24 +1238,17 @@ def ask_model_for_sql(question: str, schema_cols: list, sample_rows: pd.DataFram
         prompt = f"""
         Given the database schema and sample data, generate a SQL query to answer the question.
         Use table name: {TABLE}
-
+        
         {schema_info}
-
+        
         Sample data:
         {sample_info}
-
-        VERY IMPORTANT RULES:
-        - Prefer aggregations (SUM, COUNT, GROUP BY) when possible.
-        - If you select raw rows, you MUST include 'LIMIT 5000'.
-        - NEVER do 'SELECT * FROM {TABLE}' without a LIMIT.
-        - Only generate a single SELECT statement.
-
+        
         Question: {question}
-
+        
         Return only the SQL query without any explanation or markdown formatting.
         If you cannot generate a safe SELECT query, return "NO_SQL".
         """
-
         
         response = client.chat.completions.create(
             model=CHAT_MODEL,
@@ -1309,15 +1302,6 @@ SESSION_COOKIE_TTL_DAYS = 365 * 2
 
 def _make_sid():
     return uuid.uuid4().hex
-# Global error handler so frontend always gets valid JSON, not HTML
-@app.errorhandler(500)
-def handle_500(e):
-    print("GLOBAL 500 ERROR:", e, traceback.format_exc())
-    return jsonify({
-        "reply": "Sorry — an internal server error happened on the server.",
-        "table_html": "",
-        "plot_data_uri": None
-    }), 500
 
 @app.before_request
 def ensure_sid_cookie():
