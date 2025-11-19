@@ -1,0 +1,10 @@
+flask>=2.3
+openai>=1.0
+sqlalchemy>=2.0
+pyodbc>=4.0
+pandas>=2.0
+matplotlib>=3.7
+python-dotenv>=1.0
+joblib>=1.3
+gunicorn>=20.1
+tzdata
