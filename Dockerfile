@@ -21,5 +21,5 @@ COPY . /app
 # Expose app port (Render will set $PORT, but 3000 is our internal default)
 EXPOSE 3000
 
-# Gunicorn entrypoint: your Flask app is `app` inside `server.py`
-CMD ["gunicorn", "server:app", "--bind", "0.0.0.0:3000", "--workers", "2", "--threads", "2"]
+# Gunicorn entrypoint: use $PORT if set (Render), else 3000 (local)
+CMD ["sh", "-c", "gunicorn server:app --bind 0.0.0.0:${PORT:-3000} --workers 2 --threads 2"]
