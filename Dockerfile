@@ -1,26 +1,25 @@
-# Use full Python image so matplotlib & duckdb work without extra OS deps
+# Use a full Python image so matplotlib + duckdb Just Work™
 FROM python:3.11
 
-# Workdir inside the container
+# Runtime envs
+ENV PYTHONUNBUFFERED=1
+ENV MPLCONFIGDIR=/tmp/.matplotlib
+
+# App directory
 WORKDIR /app
 
-# Install Python dependencies first (better layer caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python deps first (better layer cache)
+COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r /app/requirements.txt && \
+    pip install --no-cache-dir gunicorn
 
-# Copy application code
-COPY server.py utils.py index.html ./
+# Copy the rest of the application
+# (server.py, utils.py, index.html, static/, data/, etc.)
+COPY . /app
 
-# If you have these folders, copy them too.
-# (If you don't have them yet, either create empty folders or delete these two lines.)
-COPY static ./static
-COPY data ./data
-
-# Make logs unbuffered
-ENV PYTHONUNBUFFERED=1
-
-# Render will inject $PORT; your app already uses os.getenv("PORT", "3000") :contentReference[oaicite:1]{index=1}
+# Expose app port (Render will set $PORT, but 3000 is our internal default)
 EXPOSE 3000
 
-# Use gunicorn to serve the Flask app: "server:app"
-CMD gunicorn -b 0.0.0.0:$PORT server:app
+# Gunicorn entrypoint: your Flask app is `app` inside `server.py`
+CMD ["gunicorn", "server:app", "--bind", "0.0.0.0:3000", "--workers", "2", "--threads", "2"]
