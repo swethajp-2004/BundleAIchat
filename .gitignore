@@ -1,5 +1,56 @@
+# --- Environment & Secrets ---
 .env
+.env.*
+*.key
+*.pem
+
+# --- Python caches ---
 __pycache__/
-*.pyc
-data/chat_memory.db
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+env/
+venv/
+.venv/
+ENV/
+
+# --- Data & local databases ---
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.json.backup
+
+# Do NOT ignore the whole data/ directory.
+# Just ignore the runtime chat memory file:
 data/conversations.json
+
+# --- Logs & temp ---
+*.log
+*.tmp
+*.bak
+*.swp
+
+# --- OS / IDE files ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Docker-related ---
+docker-compose.override.yml
+*.pid
+*.tar
+
+# --- Frontend (if used later) ---
+node_modules/
+build/
+dist/
+*.zip
+
+# --- Misc ---
+__MACOSX/
