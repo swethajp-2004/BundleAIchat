@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    # Load secrets & config from .env (OPENAI_API_KEY, DUCKDB_FILE, etc.)
+    env_file:
+      - .env
+    environment:
+      # Optional overrides / defaults
+      - CHAT_MODEL=${CHAT_MODEL:-gpt-4o-mini}
+      - MAX_ROWS=${MAX_ROWS:-5000}
+      - DEBUG_SQL=${DEBUG_SQL:-false}
+      # Explicitly forward these from .env (good for clarity)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DUCKDB_FILE=${DUCKDB_FILE}
+      # If you want to keep a separate MOTHERDUCK_TOKEN:
+      - MOTHERDUCK_TOKEN=${MOTHERDUCK_TOKEN}
+    # For local dev: live-reload style (code changes picked up immediately)
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
