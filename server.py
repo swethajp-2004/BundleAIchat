@@ -928,7 +928,7 @@ def handle_top_by_entity(question, entity_type='package'):
 
         # small helper to quote identifiers safely for DuckDB (assumes name from schema)
         def qident(name: str) -> str:
-            return f"\"{name.replace('\"', '\"\"')}\""
+            return '"' + name.replace('"', '""') + '"'
 
         ql = (question or "").lower()
 
